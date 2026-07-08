@@ -5,18 +5,19 @@
 #   ・「何であるか」(歩行者・車・自転車など) が分かる
 #   ・光のちらつき・木の揺れなどの誤検出に強い
 #
-# YOLOv8 の ONNX モデルを OpenCV の DNN 機能で動かす。
-# モデルファイル (data/yolov8n.onnx) が置いてある時だけ使える。
-# 用意の仕方は tools/download_model.py を参照。
-# モデルが無い環境では watcher.py が従来の動き検出に自動で切り替える。
+# YOLOv8 の ONNX モデルを onnxruntime で動かす。
+# モデルファイル (data/yolov8n.onnx) と onnxruntime の両方が
+# そろっている時だけ使える。モデルの用意は tools/download_model.py を参照。
+# どちらかが無い環境では watcher.py が従来の動き検出に自動で切り替える。
 #
 # 見つけた物は detector.py と同じ形式 (0〜1の割合) で返すので、
 # 後段 (tracker / future / hud) はどちらの検出器でも同じように動く。
 
 import os
 
-import cv2
 import numpy as np
+
+from app import imgproc
 
 # モデルファイルの置き場所 (プロジェクトの data フォルダ)
 MODEL_FILE = os.path.join(
@@ -55,6 +56,48 @@ LABELS_JA = {
 def model_available(path=MODEL_FILE):
     """モデルファイルが置いてあるかどうかを返す。"""
     return isinstance(path, str) and os.path.isfile(path)
+
+
+def runtime_available():
+    """AIモデルを動かすライブラリ (onnxruntime) が入っているかを返す。"""
+    try:
+        import onnxruntime  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _nms(boxes, scores, threshold):
+    """同じ物に重なった枠をまとめ、残す枠の番号を返す (NMS)。
+
+    boxes  : [x, y, 幅, 高さ] のリスト
+    scores : 各枠の確信度
+    threshold : これ以上重なっている枠は同じ物とみなす (0〜1)
+    """
+    boxes = np.asarray(boxes, dtype=np.float32)
+    scores = np.asarray(scores, dtype=np.float32)
+    x1 = boxes[:, 0]
+    y1 = boxes[:, 1]
+    x2 = boxes[:, 0] + boxes[:, 2]
+    y2 = boxes[:, 1] + boxes[:, 3]
+    areas = boxes[:, 2] * boxes[:, 3]
+
+    order = np.argsort(scores)[::-1]  # 確信度の高い順
+    keep = []
+    while order.size > 0:
+        i = order[0]
+        keep.append(int(i))
+        rest = order[1:]
+        # 残りの枠との重なり具合 (IoU) を計算する
+        ix1 = np.maximum(x1[i], x1[rest])
+        iy1 = np.maximum(y1[i], y1[rest])
+        ix2 = np.minimum(x2[i], x2[rest])
+        iy2 = np.minimum(y2[i], y2[rest])
+        inter = (np.maximum(0.0, ix2 - ix1) * np.maximum(0.0, iy2 - iy1))
+        union = areas[i] + areas[rest] - inter
+        iou = inter / np.maximum(union, 1e-9)
+        order = rest[iou <= threshold]
+    return keep
 
 
 def parse_detections(output, conf=0.35, nms=0.45, input_size=INPUT_SIZE):
@@ -110,8 +153,7 @@ def parse_detections(output, conf=0.35, nms=0.45, input_size=INPUT_SIZE):
         return []
 
     # 同じ物に重なった枠をまとめる (NMS)
-    keep = cv2.dnn.NMSBoxes(boxes, kept_scores, conf, nms)
-    keep = np.asarray(keep).flatten()
+    keep = _nms(boxes, kept_scores, nms)
 
     things = []
     for i in keep:
@@ -138,7 +180,7 @@ class ObjectFinder:
     """AIモデルで人・車などを見つける係。detector.MovingThingFinder と同じ使い方。
 
     使い方:
-        if objectdetect.model_available():
+        if objectdetect.model_available() and objectdetect.runtime_available():
             finder = ObjectFinder()
             things = finder.find(frame)   # 毎フレーム呼ぶ
     """
@@ -151,9 +193,15 @@ class ObjectFinder:
         if not model_available(path):
             raise ValueError("モデルファイルがありません: " + str(path))
         try:
-            self.net = cv2.dnn.readNetFromONNX(path)
-        except cv2.error as exc:
+            import onnxruntime
+        except ImportError:
+            raise ValueError("onnxruntime が入っていないためAI認識は使えません")
+        try:
+            self.session = onnxruntime.InferenceSession(
+                path, providers=["CPUExecutionProvider"])
+        except Exception as exc:
             raise ValueError("モデルファイルを読み込めません: " + str(path)) from exc
+        self._input_name = self.session.get_inputs()[0].name
         self.conf = conf
         self.nms = nms
 
@@ -164,14 +212,14 @@ class ObjectFinder:
         if not isinstance(frame, np.ndarray) or frame.size == 0:
             raise ValueError("画像の形式が正しくありません")
         if frame.ndim == 2:
-            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+            frame = np.stack([frame, frame, frame], axis=2)
         elif frame.ndim != 3 or frame.shape[2] != 3:
             raise ValueError("画像はカラー(縦x横x3)か白黒(縦x横)にしてください")
 
-        blob = cv2.dnn.blobFromImage(
-            frame, scalefactor=1 / 255.0, size=(INPUT_SIZE, INPUT_SIZE),
-            swapRB=True, crop=False,
-        )
-        self.net.setInput(blob)
-        output = self.net.forward()
+        # モデルの入力に合わせる: 640x640 に伸縮 → R,G,B の順 → 0〜1 に直す
+        resized = imgproc.resize(frame, INPUT_SIZE, INPUT_SIZE)
+        rgb = resized[:, :, ::-1].astype(np.float32) / 255.0
+        blob = np.ascontiguousarray(rgb.transpose(2, 0, 1)[np.newaxis])
+
+        output = self.session.run(None, {self._input_name: blob})[0]
         return parse_detections(output, conf=self.conf, nms=self.nms)

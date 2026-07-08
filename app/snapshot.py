@@ -1,20 +1,21 @@
 # 報告があった場面の映像を残すファイル
 #
 # 直近の数秒分のフレームを覚えておき、ユーザーが「誤報を報告」
-# 「見逃しを報告」した瞬間に、その場面を画像(JPEG)で保存する。
+# 「見逃しを報告」した瞬間に、その場面を画像(PNG)で保存する。
 #
 # 走行ログ (triplog.py) と合わせて見返すことで、
 # 「誤報が出た時、実際には何が映っていたのか」を確かめられる。
 #
-# 保存先のフォルダが日本語名でも動くように、cv2.imwrite ではなく
-# imencode + 通常のファイル書き込みを使う (Windows対策)。
+# 画像は自前のPNG書き出し (imgproc.encode_png) で作るので、
+# 追加のライブラリが無くても・保存先が日本語名でも動く。
 
 import collections
 import os
 import time
 
-import cv2
 import numpy as np
+
+from app import imgproc
 
 # 覚えておくフレーム数 (15fpsで約3秒)
 KEEP_FRAMES = 45
@@ -58,7 +59,7 @@ class SnapshotKeeper:
         self._frames.append(frame)
 
     def save(self, tag, t=None):
-        """覚えているフレームから数枚を選んでJPEGで保存する。
+        """覚えているフレームから数枚を選んでPNGで保存する。
 
         tag : ファイル名の頭につける言葉 (報告の種類など)
         t   : 時刻 (テスト用。省略すると現在時刻)
@@ -90,16 +91,14 @@ class SnapshotKeeper:
         except OSError:
             return []
         for i, frame in enumerate(picks):
-            name = "{}_{}_{}.jpg".format(tag.strip(), stamp, i)
+            name = "{}_{}_{}.png".format(tag.strip(), stamp, i)
             path = os.path.join(self.folder, name)
             try:
-                ok, encoded = cv2.imencode(".jpg", frame)
-                if not ok:
-                    continue
+                encoded = imgproc.encode_png(frame)
                 with open(path, "wb") as f:
-                    f.write(encoded.tobytes())
+                    f.write(encoded)
                 saved.append(path)
-            except (OSError, cv2.error):
+            except (OSError, ValueError):
                 continue  # 1枚の失敗で全体は止めない
         self._prune()
         return saved
@@ -113,7 +112,7 @@ class SnapshotKeeper:
         try:
             files = [os.path.join(self.folder, name)
                      for name in os.listdir(self.folder)
-                     if name.endswith(".jpg")]
+                     if name.endswith(".png")]
             if len(files) <= self.max_files:
                 return
             files.sort(key=os.path.getmtime)

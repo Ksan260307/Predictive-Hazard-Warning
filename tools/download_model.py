@@ -43,9 +43,14 @@ def main():
     os.makedirs(os.path.dirname(TARGET), exist_ok=True)
     shutil.move(str(exported), TARGET)
 
-    # OpenCV で読めることを確かめる
-    import cv2
-    cv2.dnn.readNetFromONNX(TARGET)
+    # アプリと同じ方法 (onnxruntime) で読めることを確かめる
+    try:
+        import onnxruntime
+        onnxruntime.InferenceSession(TARGET, providers=["CPUExecutionProvider"])
+    except ImportError:
+        print("注意: onnxruntime が無いため読み込み確認は省略しました。")
+        print("アプリでAI認識を使うには onnxruntime のインストールが必要です:")
+        print("    pip install onnxruntime")
     print("完了:", TARGET)
     print("アプリを起動すると、AI物体認識が自動で有効になります。")
     return 0

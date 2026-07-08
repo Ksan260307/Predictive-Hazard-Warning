@@ -18,7 +18,12 @@ icon.filename = %(source.dir)s/data/icon.png
 presplash.filename = %(source.dir)s/data/presplash.png
 
 # アプリが使うライブラリ
-requirements = python3,kivy,plyer,numpy,opencv
+# (OpenCVはAndroidでのビルドが難しいため使わない。画像処理は numpy 製の
+#  app/imgproc.py で行う)
+requirements = python3,kivy,plyer,numpy
+
+# numpy v2.3.0 のコンパイルエラーを直すパッチ入りのレシピ置き場
+p4a.local_recipes = %(source.dir)s/p4a-recipes
 
 # 横画面で使う
 orientation = landscape

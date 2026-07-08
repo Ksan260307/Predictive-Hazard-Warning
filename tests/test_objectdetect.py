@@ -144,7 +144,8 @@ def test_おかしな設定は止まる(tmp_path):
 # ---------- 実モデルでの動作 (モデルがある環境のみ) ----------
 
 needs_model = pytest.mark.skipif(
-    not model_available(), reason="data/yolov8n.onnx が無い環境ではスキップ")
+    not (model_available() and objectdetect.runtime_available()),
+    reason="data/yolov8n.onnx か onnxruntime が無い環境ではスキップ")
 
 
 @needs_model

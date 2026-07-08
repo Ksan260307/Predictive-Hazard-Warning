@@ -8,12 +8,12 @@
 #
 # 文字は描かない (映像上の文字は運転中に読めないため、言葉はUI側に出す)。
 
-import cv2
 import numpy as np
 
+from app import imgproc
 from app.risk import CENTER_LEFT, CENTER_RIGHT
 
-# レベルごとの表示色 (OpenCVなので B, G, R の順)
+# レベルごとの表示色 (画像の色は B, G, R の順)
 LEVEL_COLORS = {
     0: (90, 165, 45),    # 緑
     1: (25, 175, 235),   # 黄
@@ -55,10 +55,8 @@ def draw_hud(frame, result, alpha=0.25):
     left = int(w * CENTER_LEFT)
     right = int(w * CENTER_RIGHT)
     if top < h - 1 and left < right:
-        shade = out.copy()
-        cv2.rectangle(shade, (left, top), (right, h - 1), color, -1)
-        cv2.addWeighted(shade, alpha, out, 1 - alpha, 0, dst=out)
-        cv2.rectangle(out, (left, top), (right, h - 1), color, 1)
+        imgproc.blend_rect(out, left, top, right, h - 1, color, alpha)
+        imgproc.draw_rect(out, left, top, right, h - 1, color, thickness=1)
 
     # --- 検出した物体: 枠 + 進行方向の矢印 ---
     for t in result["things"]:
@@ -66,37 +64,38 @@ def draw_hud(frame, result, alpha=0.25):
         y1 = int(t["y"] * h)
         x2 = int((t["x"] + t["w"]) * w)
         y2 = int((t["y"] + t["h"]) * h)
-        cv2.rectangle(out, (x1, y1), (x2, y2), BOX_COLOR, 2)
+        imgproc.draw_rect(out, x1, y1, x2, y2, BOX_COLOR, thickness=2)
         # 矢印: 今の速さで8フレーム先までの移動を示す
         cx, cy = int(t["cx"] * w), int(t["cy"] * h)
         ex = int((t["cx"] + t["vx"] * 8) * w)
         ey = int((t["cy"] + t["vy"] * 8) * h)
         if (ex, ey) != (cx, cy):
-            cv2.arrowedLine(out, (cx, cy), (ex, ey), BOX_COLOR, 2, tipLength=0.35)
+            imgproc.draw_arrow(out, (cx, cy), (ex, ey), BOX_COLOR,
+                               thickness=2, tip_length=0.35)
 
     # --- 死角候補: 縦線 + 根元の三角マーカー ---
     for spot in result["blind_spots"]:
         x = int(spot["x"] * w)
         y_top = int(h * 0.35)
-        cv2.line(out, (x, y_top), (x, h - 1), SPOT_COLOR, 2)
+        imgproc.draw_line(out, (x, y_top), (x, h - 1), SPOT_COLOR, thickness=2)
         size = max(4, int(h * 0.04))
         base_y = int(h * spot["y"])
-        pts = np.array([
+        imgproc.fill_triangle(out, [
             (x, base_y - size),
             (x - size, base_y + size),
             (x + size, base_y + size),
-        ])
-        cv2.fillPoly(out, [pts], SPOT_COLOR)
+        ], SPOT_COLOR)
 
     # --- 画面上部の危険度バー ---
     risk = min(1.0, max(0.0, float(result["risk"])))
     bar_w = int(w * 0.35)
     bar_h = max(4, int(h * 0.03))
     x0, y0 = int(w * 0.02), int(h * 0.03)
-    cv2.rectangle(out, (x0, y0), (x0 + bar_w, y0 + bar_h), (70, 70, 70), -1)
+    imgproc.fill_rect(out, x0, y0, x0 + bar_w, y0 + bar_h, (70, 70, 70))
     fill = int(bar_w * risk)
     if fill > 0:
-        cv2.rectangle(out, (x0, y0), (x0 + fill, y0 + bar_h), color, -1)
-    cv2.rectangle(out, (x0, y0), (x0 + bar_w, y0 + bar_h), (200, 200, 200), 1)
+        imgproc.fill_rect(out, x0, y0, x0 + fill, y0 + bar_h, color)
+    imgproc.draw_rect(out, x0, y0, x0 + bar_w, y0 + bar_h, (200, 200, 200),
+                      thickness=1)
 
     return out

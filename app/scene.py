@@ -13,8 +13,9 @@
 
 import math
 
-import cv2
 import numpy as np
+
+from app import imgproc
 
 # 死角とみなす縦エッジの強さ(正規化後)の下限
 SPOT_THRESHOLD = 0.35
@@ -102,7 +103,7 @@ class SceneReader:
             lower = gray
 
         # 縦方向の境界(壁の角・塀の端など)の強さを列ごとに集計する
-        sobel = cv2.Sobel(lower, cv2.CV_32F, 1, 0, ksize=3)
+        sobel = imgproc.sobel_x(lower)
         column_edge = np.abs(sobel).mean(axis=0) / 255.0
         if len(column_edge) >= 5:
             kernel = np.ones(5) / 5.0
@@ -150,7 +151,7 @@ class SceneReader:
         if frame.size == 0:
             raise ValueError("画像が空です")
         if frame.ndim == 3 and frame.shape[2] == 3:
-            return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            return imgproc.to_gray(frame)
         if frame.ndim == 2:
             return frame
         raise ValueError("画像はカラー(縦x横x3)か白黒(縦x横)にしてください")

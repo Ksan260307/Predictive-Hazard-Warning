@@ -26,6 +26,7 @@ jobs:
             autoconf \
             libtool \
             pkg-config \
+            patch \
             zlib1g-dev
 
       - name: Install Buildozer

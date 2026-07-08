@@ -1,0 +1,16 @@
+Fix build error on Android NDK (libc++):
+  numpy/_core/src/multiarray/unique.cpp:123:6: error: no template named
+  'unordered_map' in namespace 'std'
+The file uses std::unordered_map but never includes the header.
+Upstream fix: https://github.com/numpy/numpy/pull/29662 (not backported to 2.3.x)
+
+--- a/numpy/_core/src/multiarray/unique.cpp
++++ b/numpy/_core/src/multiarray/unique.cpp
+@@ -4,6 +4,7 @@
+ #include <Python.h>
+ 
+ #include <unordered_set>
++#include <unordered_map>
+ #include <functional>
+ 
+ #include <numpy/npy_common.h>

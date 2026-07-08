@@ -16,7 +16,7 @@ import time
 
 os.environ.setdefault("KIVY_NO_ARGS", "1")
 
-import cv2
+import numpy as np
 
 from kivy.app import App
 from kivy.clock import Clock
@@ -38,6 +38,7 @@ from kivy.uix.widget import Widget
 from kivy.utils import platform
 
 import app as app_pkg
+from app import camera as camera_mod
 from app import modes
 from app import power as power_mod
 from app import settings as settings_mod
@@ -361,7 +362,7 @@ class WatchScreen(Screen):
 
     def show_frame(self, frame):
         from kivy.graphics.texture import Texture
-        flipped = cv2.flip(frame, 0)  # Kivyは上下が逆なので反転する
+        flipped = np.ascontiguousarray(frame[::-1])  # Kivyは上下が逆なので反転する
         texture = Texture.create(size=(frame.shape[1], frame.shape[0]), colorfmt="bgr")
         texture.blit_buffer(flipped.tobytes(), colorfmt="bgr", bufferfmt="ubyte")
         self.camera_view.texture = texture
@@ -521,6 +522,7 @@ class SakiyomiApp(App):
         Window.clearcolor = COLORS["bg"]
         if platform not in ("android", "ios"):
             Window.size = (900, 440)  # スマートフォンの横持ちと同じ比率
+        self._request_android_permissions()
 
         self.settings_values = settings_mod.load_settings()
         self.watcher = DangerWatcher(self.settings_values, learn_path=LEARN_FILE)
@@ -553,6 +555,26 @@ class SakiyomiApp(App):
         Clock.schedule_interval(self._tick, 1.0 / 15)
         return manager
 
+    @staticmethod
+    def _request_android_permissions():
+        """Androidでカメラと位置情報の許可をユーザーに求める。
+
+        Android 6 以降は、インストール時ではなく起動してから許可を求める
+        決まりになっている。許可される前にカメラを開こうとして失敗しても、
+        デモ映像でつなぎながら定期的に開き直すので問題ない。
+        """
+        if platform != "android":
+            return
+        try:
+            from android.permissions import Permission, request_permissions
+            request_permissions([
+                Permission.CAMERA,
+                Permission.ACCESS_FINE_LOCATION,
+                Permission.ACCESS_COARSE_LOCATION,
+            ])
+        except Exception:
+            pass  # 許可の仕組みが使えない環境ではそのまま進む
+
     # ---------------- カメラ ----------------
 
     def _open_camera(self):
@@ -569,18 +591,14 @@ class SakiyomiApp(App):
             return
 
         camera_no = self.settings_values["camera_no"]
-        if sys.platform == "win32":
-            capture = cv2.VideoCapture(camera_no, cv2.CAP_DSHOW)
-        else:
-            capture = cv2.VideoCapture(camera_no)
+        capture = camera_mod.open_camera(camera_no)
 
-        if capture.isOpened():
+        if capture is not None:
             self.capture = capture
             self.using_demo = False
             self.watcher.apply_settings(self.settings_values)
             self.watch_screen.set_badge("")
         else:
-            capture.release()
             # カメラが見つからない間はデモ映像でつなぎ、定期的に再接続を試す。
             # デモは合成映像なのでAI認識は効かず、動き検出に切り替えてもらう
             self.capture = DemoCamera()

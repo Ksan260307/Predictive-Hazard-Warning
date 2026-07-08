@@ -1,10 +1,10 @@
 # snapshot.py (報告場面の画像の保存) のテスト
 import os
 
-import cv2
 import numpy as np
 import pytest
 
+from app import imgproc
 from app.snapshot import SnapshotKeeper
 
 
@@ -14,7 +14,7 @@ def frame(shade=128, width=64, height=48):
 
 # ---------- 保存の基本 ----------
 
-def test_報告するとJPEGが保存される(tmp_path):
+def test_報告するとPNGが保存される(tmp_path):
     keeper = SnapshotKeeper(str(tmp_path / "snaps"))
     for i in range(10):
         keeper.add(frame(shade=i * 20))
@@ -23,9 +23,9 @@ def test_報告するとJPEGが保存される(tmp_path):
     for path in paths:
         assert os.path.isfile(path)
         assert os.path.basename(path).startswith("missed_")
-        # 保存した画像はJPEGとして読み戻せる
-        data = np.fromfile(path, dtype=np.uint8)
-        image = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        # 保存した画像はPNGとして読み戻せる
+        with open(path, "rb") as f:
+            image = imgproc.decode_png(f.read())
         assert image is not None
         assert image.shape == (48, 64, 3)
 
@@ -37,8 +37,8 @@ def test_古い場面から新しい場面まで等間隔に選ばれる(tmp_pat
     paths = keeper.save("false_alarm", t=100.0)
     shades = []
     for path in sorted(paths):
-        data = np.fromfile(path, dtype=np.uint8)
-        image = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        with open(path, "rb") as f:
+            image = imgproc.decode_png(f.read())
         shades.append(int(image.mean()))
     # 一番古い場面(暗い)と一番新しい場面(明るい)の両方が入っている
     assert shades[0] < 30
@@ -85,7 +85,7 @@ def test_画像が増えすぎたら古い物から消される(tmp_path):
     keeper.add(frame())
     for i in range(5):
         keeper.save("missed", t=100.0 + i)
-    files = [name for name in os.listdir(folder) if name.endswith(".jpg")]
+    files = [name for name in os.listdir(folder) if name.endswith(".png")]
     assert len(files) <= 6
 
 

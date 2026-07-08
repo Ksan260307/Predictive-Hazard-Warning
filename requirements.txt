@@ -1,6 +1,9 @@
+# 必須
 kivy>=2.3
-opencv-python>=4.8
 numpy>=1.26
-pytest>=8.0
 plyer>=2.1
+pytest>=8.0
 
+# 任意 (無くてもアプリは動く)
+# opencv-python>=4.8   # PCでカメラ映像を使う場合 (Androidでは不要)
+# onnxruntime>=1.17    # AI物体認識 (data/yolov8n.onnx) を使う場合

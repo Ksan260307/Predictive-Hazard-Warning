@@ -77,10 +77,11 @@ pip install buildozer
 buildozer android debug
 ```
 
-> 注意: Android 実機ではカメラ取得 (`cv2.VideoCapture`) が機種により動作しない
-> ことがあります。その場合は `camera4kivy` 等への差し替えが必要です。
-> 分析エンジン (`app/` 以下) はそのまま利用できます。
-> GPS は `plyer` 経由で取得します (位置情報の権限が必要)。
+> メモ: OpenCV は Android でのビルドが難しいため使っていません。
+> 画像処理は numpy 製の `app/imgproc.py`、カメラは環境ごとに
+> `app/camera.py` が面倒を見ます (Android は Kivy のカメラ機能、
+> PC は OpenCV が入っていればそれを使う)。
+> GPS は `plyer` 経由で取得します (カメラ・位置情報の権限は起動時に求めます)。
 
 ## 画面の見方
 

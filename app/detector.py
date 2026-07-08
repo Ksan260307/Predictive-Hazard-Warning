@@ -10,8 +10,9 @@
 
 import math
 
-import cv2
 import numpy as np
+
+from app import imgproc
 
 # 前の画像の物と「同じ物」とみなす距離 (画面の15%まで)
 SAME_THING_DISTANCE = 0.15
@@ -33,12 +34,16 @@ def shrink_frame(frame, max_width=320):
     if w <= max_width:
         return frame
     new_h = max(1, round(h * max_width / w))
-    return cv2.resize(frame, (max_width, new_h), interpolation=cv2.INTER_AREA)
+    return imgproc.resize(frame, max_width, new_h)
 
 
-# カメラの動きの推定に最低限必要な目印の数。
+# カメラの動きの推定に最低限必要な「目印の多さ」(画素の割合)。
 # 目印が少なすぎる(画面がのっぺりしている)時は推定をあきらめる
-MIN_ALIGN_POINTS = 40
+MIN_TEXTURE_DENSITY = 0.05
+
+# ズレの推定を信じる「確からしさ」の下限。
+# これより低い時 (映像がでたらめに変わった時など) は打ち消さない
+MIN_SHIFT_STRENGTH = 0.2
 
 # カメラの動きを打ち消した時に無視する画面のふちの幅 (割合)。
 # ふちは合わせきれずブレが残りやすいため
@@ -91,28 +96,26 @@ class MovingThingFinder:
             prev = self._align_to(prev, gray)
 
         # 前の画像との差を取り、変わった場所を白にする
-        diff = cv2.absdiff(gray, prev)
-        _, mask = cv2.threshold(diff, self.threshold, 255, cv2.THRESH_BINARY)
+        diff = np.abs(gray.astype(np.int16) - prev.astype(np.int16))
+        mask = diff > self.threshold
 
         # 打ち消しをした場合、合わせきれない画面のふちは見ない
         if self.stabilize:
             mh = max(1, int(mask.shape[0] * EDGE_MARGIN))
             mw = max(1, int(mask.shape[1] * EDGE_MARGIN))
-            mask[:mh, :] = 0
-            mask[-mh:, :] = 0
-            mask[:, :mw] = 0
-            mask[:, -mw:] = 0
+            mask[:mh, :] = False
+            mask[-mh:, :] = False
+            mask[:, :mw] = False
+            mask[:, -mw:] = False
 
-        mask = cv2.dilate(mask, None, iterations=2)  # 白い場所を少しふくらませてつなげる
+        mask = imgproc.dilate(mask, iterations=2)  # 白い場所を少しふくらませてつなげる
 
         # 白いかたまりを物として拾う
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         img_h, img_w = gray.shape
         min_area = self.min_size * img_w * img_h
 
         things = []
-        for c in contours:
-            x, y, w, h = cv2.boundingRect(c)
+        for x, y, w, h in imgproc.find_boxes(mask):
             if w * h < min_area:
                 continue  # 小さすぎる物はノイズとして捨てる
             things.append({
@@ -148,32 +151,25 @@ class MovingThingFinder:
     def _align_to(prev, gray):
         """前の画像を、今の画像のカメラ位置に合わせて動かして返す。
 
-        1. 前の画像から追いやすい目印(角など)を拾う
-        2. その目印が今の画像でどこへ動いたかを追う
-        3. 画面全体としての動き(=自分の移動)を計算して打ち消す
+        1. 画像に目印 (模様や境界) が十分あるかを確かめる
+        2. 画面全体が何画素ズレたかを推定する (位相相関)
+        3. そのぶんだけ前の画像を動かして、自分の移動を打ち消す
 
-        目印が足りない・計算できない時は、前の画像をそのまま返す。
+        目印が足りない・推定が確かでない時は、前の画像をそのまま返す。
         """
-        prev_points = cv2.goodFeaturesToTrack(
-            prev, maxCorners=200, qualityLevel=0.01, minDistance=8,
-        )
-        if prev_points is None or len(prev_points) < MIN_ALIGN_POINTS:
+        if imgproc.texture_density(prev) < MIN_TEXTURE_DENSITY:
             return prev
 
-        next_points, status, _ = cv2.calcOpticalFlowPyrLK(prev, gray, prev_points, None)
-        if next_points is None or status is None:
+        dx, dy, strength = imgproc.estimate_shift(prev, gray)
+        if strength < MIN_SHIFT_STRENGTH:
             return prev
-        good = status.flatten() == 1
-        if good.sum() < MIN_ALIGN_POINTS:
-            return prev
-
-        # 画面全体の動きを1つの平行移動+回転+拡大として推定する
-        # (はぐれた目印は自動で無視される)
-        matrix, _ = cv2.estimateAffinePartial2D(prev_points[good], next_points[good])
-        if matrix is None:
+        if dx == 0 and dy == 0:
             return prev
         h, w = prev.shape
-        return cv2.warpAffine(prev, matrix, (w, h), borderMode=cv2.BORDER_REPLICATE)
+        # 画面の2割を超えるズレはカメラの動きとしては大きすぎるので信じない
+        if abs(dx) > w * 0.2 or abs(dy) > h * 0.2:
+            return prev
+        return imgproc.shift_image(prev, dx, dy)
 
     @staticmethod
     def _to_gray(frame):
@@ -185,10 +181,10 @@ class MovingThingFinder:
         if frame.size == 0:
             raise ValueError("画像が空です")
         if frame.ndim == 3 and frame.shape[2] == 3:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            gray = imgproc.to_gray(frame)
         elif frame.ndim == 2:
             gray = frame
         else:
             raise ValueError("画像はカラー(縦x横x3)か白黒(縦x横)にしてください")
         # ざらつきをならして、細かいノイズを拾いにくくする
-        return cv2.GaussianBlur(gray, (5, 5), 0)
+        return imgproc.blur(gray)
