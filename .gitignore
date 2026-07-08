@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Kivy / Android build artifacts
+build/
+dist/
+*.apk
+*.aab
+*.keystore
+*.so
+
+# Project runtime data
+settei.json
+learned.json
+triplog.jsonl
+trip_snapshots/
+data/*.onnx
+
+# Logs / temp files
+*.log
+*.tmp
+*.bak
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/

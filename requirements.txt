@@ -1,0 +1,6 @@
+kivy>=2.3
+opencv-python>=4.8
+numpy>=1.26
+pytest>=8.0
+plyer>=2.1
+
