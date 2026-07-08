@@ -39,6 +39,7 @@ from kivy.utils import platform
 
 import app as app_pkg
 from app import camera as camera_mod
+from app import crashlog
 from app import modes
 from app import power as power_mod
 from app import settings as settings_mod
@@ -362,9 +363,11 @@ class WatchScreen(Screen):
 
     def show_frame(self, frame):
         from kivy.graphics.texture import Texture
-        flipped = np.ascontiguousarray(frame[::-1])  # Kivyは上下が逆なので反転する
-        texture = Texture.create(size=(frame.shape[1], frame.shape[0]), colorfmt="bgr")
-        texture.blit_buffer(flipped.tobytes(), colorfmt="bgr", bufferfmt="ubyte")
+        # Kivyは上下が逆なので反転し、色は B,G,R → R,G,B に並べ替える。
+        # (AndroidのGLESはBGRテクスチャに対応しないことがあるためRGBで渡す)
+        rgb = np.ascontiguousarray(frame[::-1, :, ::-1])
+        texture = Texture.create(size=(frame.shape[1], frame.shape[0]), colorfmt="rgb")
+        texture.blit_buffer(rgb.tobytes(), colorfmt="rgb", bufferfmt="ubyte")
         self.camera_view.texture = texture
 
 
@@ -519,10 +522,21 @@ class SakiyomiApp(App):
     title = "{} v{}".format(app_pkg.APP_NAME, app_pkg.__version__)
 
     def build(self):
+        # 起動処理で何か失敗しても、真っ黒に落ちる代わりに
+        # エラー全文を画面に出す (原因を確かめられるように)
+        try:
+            return self._build()
+        except Exception as exc:
+            report = crashlog.format_report(exc)
+            crashlog.save_report(report, user_data_dir=self.user_data_dir)
+            return self._error_view(report)
+
+    def _build(self):
         Window.clearcolor = COLORS["bg"]
         if platform not in ("android", "ios"):
             Window.size = (900, 440)  # スマートフォンの横持ちと同じ比率
         self._request_android_permissions()
+        self._crashed = False
 
         self.settings_values = settings_mod.load_settings()
         self.watcher = DangerWatcher(self.settings_values, learn_path=LEARN_FILE)
@@ -554,6 +568,45 @@ class SakiyomiApp(App):
         self._start_gps_if_enabled()
         Clock.schedule_interval(self._tick, 1.0 / 15)
         return manager
+
+    def _error_view(self, report):
+        """エラー全文をスクロールできる画面にして返す。
+
+        実機で落ちた時、この画面をスクショして送れば原因が特定できる。
+        """
+        root = BoxLayout(orientation="vertical", padding="10dp", spacing="8dp")
+        root.add_widget(Label(
+            text="起動時にエラーが発生しました (下に詳細)",
+            font_size="16sp", bold=True, color=COLORS["danger"],
+            size_hint_y=None, height="32dp"))
+        scroll = ScrollView()
+        detail = Label(text=report, font_size="11sp", color=COLORS["text"],
+                       halign="left", valign="top", size_hint_y=None,
+                       padding=("6dp", "6dp"))
+        detail.bind(width=lambda lb, w: setattr(lb, "text_size", (w, None)))
+        detail.bind(texture_size=lambda lb, ts: setattr(lb, "height", ts[1]))
+        scroll.add_widget(detail)
+        root.add_widget(scroll)
+        return root
+
+    def _fail(self, exc):
+        """処理中に起きた例外を記録し、画面に出して監視を止める。
+
+        1フレームのエラーでアプリごと落ちるのを防ぎ、原因も残す。
+        """
+        if getattr(self, "_crashed", False):
+            return
+        self._crashed = True
+        report = crashlog.format_report(exc)
+        saved = crashlog.save_report(report, user_data_dir=self.user_data_dir)
+        Clock.unschedule(self._tick)  # 同じエラーを出し続けないよう止める
+        where = ("記録: " + saved[0]) if saved else "記録先なし"
+        try:
+            self.watch_screen.show_error("処理中にエラー。" + where)
+        except Exception:
+            pass
+        # ScreenManager の上に重ねて、エラー全文を最前面に出す
+        Window.add_widget(self._error_view(report))
 
     @staticmethod
     def _request_android_permissions():
@@ -608,7 +661,14 @@ class SakiyomiApp(App):
             self.watch_screen.set_badge("デモ映像 (カメラ未接続)")
 
     def _tick(self, dt):
-        """1回分の監視。カメラ→分析→HUD→画面表示。"""
+        """1回分の監視。エラーが出てもアプリごと落とさず、原因を残す。"""
+        try:
+            self._tick_once(dt)
+        except Exception as exc:
+            self._fail(exc)
+
+    def _tick_once(self, dt):
+        """1回分の監視の中身。カメラ→分析→HUD→画面表示。"""
         # カメラが未接続なら時々つなぎ直しを試す
         if self.using_demo and not self.settings_values["demo_mode"]:
             self._retry_wait -= 1
