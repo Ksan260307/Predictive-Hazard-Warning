@@ -32,7 +32,6 @@ android.accept_sdk_license = True
 android.minapi = 24
 
 android.sdk = 33
-android.accept_sdk_license = True
 android.ndk = 25b
 
 [buildozer]
