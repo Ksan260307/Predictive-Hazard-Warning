@@ -18,7 +18,7 @@ icon.filename = %(source.dir)s/data/icon.png
 presplash.filename = %(source.dir)s/data/presplash.png
 
 # アプリが使うライブラリ
-requirements = python3,kivy,plyer
+requirements = python3,kivy,plyer,numpy,opencv
 
 # 横画面で使う
 orientation = landscape
