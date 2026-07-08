@@ -28,7 +28,12 @@ fullscreen = 0
 android.permissions = CAMERA,ACCESS_FINE_LOCATION,ACCESS_COARSE_LOCATION,INTERNET,VIBRATE
 
 android.api = 33
+android.accept_sdk_license = True
 android.minapi = 24
+
+android.sdk = 33
+android.accept_sdk_license = True
+android.ndk = 25b
 
 [buildozer]
 log_level = 2
