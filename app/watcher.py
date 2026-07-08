@@ -25,6 +25,11 @@ from app.tracker import ThingTracker
 # 実際に見えている物の危険を、推測が上回りすぎないようにする
 PHANTOM_CAP = 0.6
 
+# 注意レベルを上げるのに必要な「連続して危険が出た回数」。
+# 一瞬の揺れやノイズで警告が跳ね上がらないよう、数フレーム続けて
+# 上がるべきと判断された時だけ1段上げる (下げる時はすぐ効かせる)
+ESCALATE_CONFIRM = 3
+
 # ユーザーからの報告の種類
 FEEDBACK_FALSE_ALARM = "false_alarm"   # 誤報だった
 FEEDBACK_MISSED = "missed"             # 危険を見逃した
@@ -58,6 +63,7 @@ class DangerWatcher:
         self.belief = FutureBelief()   # 未来の分布 Y
         self.roads = roadinfo.RoadWatcher(provider=self._make_provider())
         self.level = control.LEVEL_SAFE
+        self._rise = 0                 # レベルを上げてよいと連続で判断した回数
         self.last_features = {}
         self._tick = 0
 
@@ -206,8 +212,9 @@ class DangerWatcher:
         phase = control.phase_of(risk, d_weight, r_weight)
         inner_mode = control.mode_of(risk, d_weight, r_weight)
 
-        # (6) 行動選択
-        self.level = control.pick_level(r_weight, phase, prev_level=self.level)
+        # (6) 行動選択 (上げる時だけ数フレームの確認を挟んで、跳ねを抑える)
+        target = control.pick_level(r_weight, phase, prev_level=self.level)
+        self.level = self._smooth_level(target)
 
         # (7) 知らせ方
         result = alert.message_for(self.level)
@@ -248,6 +255,21 @@ class DangerWatcher:
             return False
         self.learner.learn(self.last_features, direction)
         return True
+
+    def _smooth_level(self, target):
+        """レベルの変化をなめらかにする。上げる時だけ確認回数を要求する。
+
+        ・target が今より高い: ESCALATE_CONFIRM 回連続で上と判断されたら1段上げる
+        ・target が今と同じか低い: すぐ従う (下げ幅は control 側で1段ずつに制限済み)
+        """
+        if target > self.level:
+            self._rise += 1
+            if self._rise >= ESCALATE_CONFIRM:
+                self._rise = 0
+                return self.level + 1
+            return self.level
+        self._rise = 0
+        return target
 
     def reset(self):
         """覚えていることを全部忘れて、最初の状態に戻る(学習は残す)。"""

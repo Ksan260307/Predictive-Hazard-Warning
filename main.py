@@ -278,17 +278,20 @@ class WatchScreen(Screen):
             self._mode_buttons[key] = button
         panel.add_widget(mode_row)
 
-        # 警告履歴
-        events_card = Card(orientation="vertical", padding="10dp", spacing="2dp")
-        events_card.add_widget(dim_label("警告履歴", size_hint_y=None, height="18dp"))
-        self._event_labels = []
-        for _ in range(4):
-            label = Label(text="", font_size="12sp", color=COLORS["text"],
-                          halign="left")
-            label.bind(size=lambda lb, _: setattr(lb, "text_size", (lb.width, None)))
-            events_card.add_widget(label)
-            self._event_labels.append(label)
-        panel.add_widget(events_card)
+        # 最新の警告 + 履歴画面を開くボタン (履歴の一覧は別画面で見せる)
+        history_card = Card(orientation="vertical", padding="10dp", spacing="6dp")
+        history_top = BoxLayout(size_hint_y=None, height="24dp")
+        history_top.add_widget(dim_label("最新の警告", halign="left"))
+        history_top.add_widget(flat_button(
+            "履歴を開く", size_hint_x=None, width="110dp",
+            on_release=lambda: setattr(self.manager, "current", "history")))
+        history_card.add_widget(history_top)
+        self.latest_label = Label(
+            text="まだ警告はありません", font_size="14sp", color=COLORS["text"],
+            halign="left", valign="top")
+        self.latest_label.bind(size=lambda lb, _: setattr(lb, "text_size", lb.size))
+        history_card.add_widget(self.latest_label)
+        panel.add_widget(history_card)
 
         # 報告ボタン
         feedback_row = BoxLayout(size_hint_y=None, height="42dp", spacing="6dp")
@@ -346,9 +349,9 @@ class WatchScreen(Screen):
                       if road["speed"] is not None else "--")
         self.state_label.text = "状態 {}   速度 {}".format(result["mode"], speed_text)
 
-    def show_events(self, events):
-        for label, event in zip(self._event_labels, list(events) + [None] * 4):
-            label.text = event if event else ""
+    def show_latest(self, event):
+        """いちばん新しい警告を1行だけ大きく表示する。"""
+        self.latest_label.text = event if event else "まだ警告はありません"
 
     def set_badge(self, text):
         self.badge_label.text = text
@@ -369,6 +372,61 @@ class WatchScreen(Screen):
         texture = Texture.create(size=(frame.shape[1], frame.shape[0]), colorfmt="rgb")
         texture.blit_buffer(rgb.tobytes(), colorfmt="rgb", bufferfmt="ubyte")
         self.camera_view.texture = texture
+
+
+# ---------------------------------------------------------------
+# 警告履歴の画面
+# ---------------------------------------------------------------
+
+class HistoryScreen(Screen):
+    """これまでに出た警告を一覧で見せる画面 (スクロールできる)。"""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        root = BoxLayout(orientation="vertical", padding="10dp", spacing="8dp")
+
+        # 上部バー: 戻る / タイトル / 消去
+        header = BoxLayout(size_hint_y=None, height="46dp", spacing="8dp")
+        header.add_widget(flat_button("< 戻る", size_hint_x=None, width="110dp",
+                                      on_release=self._back))
+        header.add_widget(Label(text="警告履歴", font_size="19sp", bold=True,
+                                color=COLORS["text"]))
+        header.add_widget(flat_button("消去", size_hint_x=None, width="110dp",
+                                      on_release=lambda: App.get_running_app()
+                                      .clear_history()))
+        root.add_widget(header)
+
+        # 一覧 (新しい物が上。1件ずつカードで、折り返して全文表示)
+        scroll = ScrollView()
+        self._list = BoxLayout(orientation="vertical", spacing="6dp",
+                               size_hint_y=None, padding=[0, 0, "8dp", 0])
+        self._list.bind(minimum_height=self._list.setter("height"))
+        self._empty_label = dim_label("まだ警告はありません", size="14sp",
+                                      size_hint_y=None, height="40dp",
+                                      halign="left")
+        self._empty_label.bind(size=lambda lb, _: setattr(lb, "text_size", lb.size))
+        self._list.add_widget(self._empty_label)
+        scroll.add_widget(self._list)
+        root.add_widget(scroll)
+        self.add_widget(root)
+
+    def show_events(self, events):
+        """警告の一覧をまるごと入れ替えて表示する。"""
+        self._list.clear_widgets()
+        events = list(events)
+        if not events:
+            self._list.add_widget(self._empty_label)
+            return
+        for event in events:
+            card = Card(padding="10dp", size_hint_y=None, height="46dp")
+            label = Label(text=event, font_size="13sp", color=COLORS["text"],
+                          halign="left", valign="middle")
+            label.bind(size=lambda lb, _: setattr(lb, "text_size", lb.size))
+            card.add_widget(label)
+            self._list.add_widget(card)
+
+    def _back(self, *_):
+        self.manager.current = "watch"
 
 
 # ---------------------------------------------------------------
@@ -549,7 +607,7 @@ class SakiyomiApp(App):
         self.capture = None
         self.using_demo = False
         self.paused = False
-        self.events = collections.deque(maxlen=4)
+        self.events = collections.deque(maxlen=50)  # 警告履歴 (別画面で一覧表示)
         self._last_beep = 0.0
         self._last_level = 0
         self._last_result = None
@@ -558,10 +616,12 @@ class SakiyomiApp(App):
 
         manager = ScreenManager()
         self.watch_screen = WatchScreen(name="watch")
+        self.history_screen = HistoryScreen(name="history")
         self.settings_screen = SettingsScreen(name="settings")
         self.settings_screen.show_values(self.settings_values)
         self.watch_screen.select_mode(self.settings_values["mode"])
         manager.add_widget(self.watch_screen)
+        manager.add_widget(self.history_screen)
         manager.add_widget(self.settings_screen)
 
         self._open_camera()
@@ -727,10 +787,12 @@ class SakiyomiApp(App):
 
         if went_up:
             stamp = time.strftime("%H:%M:%S")
-            self.events.appendleft("{}  {} ({})".format(
+            event = "{}  {} ({})".format(
                 stamp, result["name"],
-                result["reasons"][0] if result["reasons"] else "周囲の状況"))
-            self.watch_screen.show_events(self.events)
+                result["reasons"][0] if result["reasons"] else "周囲の状況")
+            self.events.appendleft(event)
+            self.watch_screen.show_latest(event)
+            self.history_screen.show_events(self.events)
             # 声: 運転中は画面を見られないので、内容を読み上げる
             if self.settings_values["voice_on"] and level >= 1:
                 spoken = (result["reasons"][0] if result["reasons"]
@@ -792,6 +854,12 @@ class SakiyomiApp(App):
         self.watch_screen.pause_button.text = "再開" if self.paused else "一時停止"
         if not self.paused:
             self.watch_screen.set_badge("デモ映像" if self.using_demo else "")
+
+    def clear_history(self):
+        """警告履歴を消す。"""
+        self.events.clear()
+        self.history_screen.show_events(self.events)
+        self.watch_screen.show_latest(None)
 
     def change_mode(self, mode_key):
         values = dict(self.settings_values)

@@ -237,6 +237,15 @@ def test_自分が動いていても本当に動く物は見つかる():
     assert found
 
 
+def test_画面全体が急に変わったら自分の動きとみなして拾わない():
+    # 打ち消しが利かないほど画面全体が一変した時 (歩きながら向きを変えた等) は、
+    # あちこちを動く物と誤検出せず、この1枚は何も拾わない
+    finder = MovingThingFinder(stabilize=True)
+    finder.find(np.zeros((120, 160, 3), dtype=np.uint8))
+    things = finder.find(np.full((120, 160, 3), 255, dtype=np.uint8))
+    assert things == []
+
+
 def test_打ち消しても止まっている箱は見つからない():
     # カメラも箱も止まっている → 何も見つからない
     bg = textured_background()

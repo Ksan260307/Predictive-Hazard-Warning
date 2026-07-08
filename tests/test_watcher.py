@@ -114,6 +114,35 @@ def test_リセットしても学習は残る():
     assert watcher.learner.feedback_count == count_before
 
 
+# ---------- 反応しすぎ対策 (レベルのなめらか化) ----------
+
+def test_レベルは連続して危険が続かないと上がらない():
+    # いきなり「危険」と判断されても、数フレーム続かないと上がらない
+    watcher = DangerWatcher()
+    seen = []
+    for _ in range(6):
+        watcher.level = watcher._smooth_level(2)  # watch() と同じ使い方
+        seen.append(watcher.level)
+    # 3回続いて初めて1段、さらに3回で2段目
+    assert seen == [0, 0, 1, 1, 1, 2]
+
+
+def test_レベルはすぐ下げられる():
+    watcher = DangerWatcher()
+    watcher.level = 2
+    assert watcher._smooth_level(1) == 1
+
+
+def test_危険が途切れると確認はやり直し():
+    watcher = DangerWatcher()
+    watcher._smooth_level(1)
+    watcher._smooth_level(1)      # あと1回で上がるところ
+    assert watcher._smooth_level(0) == 0  # 途切れたのでリセット
+    assert watcher._smooth_level(1) == 0  # 上げ直しは再び最初から
+    assert watcher._smooth_level(1) == 0
+    assert watcher._smooth_level(1) == 1
+
+
 # ---------- 検出のノイズ対策 (トラッカー) ----------
 
 def test_1フレームだけのノイズでは騒がない():

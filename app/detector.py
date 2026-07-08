@@ -49,6 +49,12 @@ MIN_SHIFT_STRENGTH = 0.2
 # ふちは合わせきれずブレが残りやすいため
 EDGE_MARGIN = 0.05
 
+# 画面のこれ以上の割合がいっぺんに動いていたら、「自分が動いた
+# (カメラ全体のブレ)」とみなして個々の物としては拾わない。
+# 室内で歩く・急に向きを変えるなど、手ブレ打ち消しが利かない場面での
+# 過剰な反応を防ぐ (打ち消しを使う時だけ効く)
+GLOBAL_MOTION_FRAC = 0.35
+
 
 class MovingThingFinder:
     """動いている物を見つける係。
@@ -109,6 +115,14 @@ class MovingThingFinder:
             mask[:, -mw:] = False
 
         mask = imgproc.dilate(mask, iterations=2)  # 白い場所を少しふくらませてつなげる
+
+        # 画面の広い範囲がいっぺんに動いた = 自分が動いた(カメラ全体のブレ)と
+        # みなして、この1枚は何も拾わない。歩きながらの撮影で画面全体が流れる
+        # ような時に、あちこちを「動く物」と誤検出して騒ぐのを防ぐ
+        if self.stabilize and float(mask.mean()) > GLOBAL_MOTION_FRAC:
+            self._prev_gray = gray
+            self._prev_things = []
+            return []
 
         # 白いかたまりを物として拾う
         img_h, img_w = gray.shape
