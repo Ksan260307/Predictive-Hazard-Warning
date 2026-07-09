@@ -76,6 +76,8 @@ def _nms(boxes, scores, threshold):
     """
     boxes = np.asarray(boxes, dtype=np.float32)
     scores = np.asarray(scores, dtype=np.float32)
+    if boxes.size == 0:
+        return []
     x1 = boxes[:, 0]
     y1 = boxes[:, 1]
     x2 = boxes[:, 0] + boxes[:, 2]

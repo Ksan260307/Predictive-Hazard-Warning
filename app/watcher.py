@@ -30,6 +30,11 @@ PHANTOM_CAP = 0.6
 # 上がるべきと判断された時だけ1段上げる (下げる時はすぐ効かせる)
 ESCALATE_CONFIRM = 3
 
+# 用心 (r_weight) がこの値以上の時は、確認を待たずにすぐレベルを上げる。
+# 差し迫った危険の警告を遅らせないため (control.pick_level の
+# 「必ず知らせる」保証と同じしきい値)
+URGENT_R_WEIGHT = 0.85
+
 # ユーザーからの報告の種類
 FEEDBACK_FALSE_ALARM = "false_alarm"   # 誤報だった
 FEEDBACK_MISSED = "missed"             # 危険を見逃した
@@ -214,7 +219,7 @@ class DangerWatcher:
 
         # (6) 行動選択 (上げる時だけ数フレームの確認を挟んで、跳ねを抑える)
         target = control.pick_level(r_weight, phase, prev_level=self.level)
-        self.level = self._smooth_level(target)
+        self.level = self._smooth_level(target, r_weight)
 
         # (7) 知らせ方
         result = alert.message_for(self.level)
@@ -256,12 +261,17 @@ class DangerWatcher:
         self.learner.learn(self.last_features, direction)
         return True
 
-    def _smooth_level(self, target):
+    def _smooth_level(self, target, r_weight=0.0):
         """レベルの変化をなめらかにする。上げる時だけ確認回数を要求する。
 
+        ・用心がとても強い (URGENT_R_WEIGHT 以上): 確認を待たずにすぐ従う。
+          差し迫った危険の警告は1フレームも遅らせない
         ・target が今より高い: ESCALATE_CONFIRM 回連続で上と判断されたら1段上げる
         ・target が今と同じか低い: すぐ従う (下げ幅は control 側で1段ずつに制限済み)
         """
+        if r_weight >= URGENT_R_WEIGHT:
+            self._rise = 0
+            return target
         if target > self.level:
             self._rise += 1
             if self._rise >= ESCALATE_CONFIRM:

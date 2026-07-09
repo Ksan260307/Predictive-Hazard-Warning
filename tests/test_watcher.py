@@ -133,6 +133,12 @@ def test_レベルはすぐ下げられる():
     assert watcher._smooth_level(1) == 1
 
 
+def test_用心がとても強い時は確認を待たずすぐ危険を出す():
+    # 差し迫った危険 (r_weight >= 0.85) の警告は1フレームも遅らせない
+    watcher = DangerWatcher()
+    assert watcher._smooth_level(2, r_weight=0.9) == 2
+
+
 def test_危険が途切れると確認はやり直し():
     watcher = DangerWatcher()
     watcher._smooth_level(1)

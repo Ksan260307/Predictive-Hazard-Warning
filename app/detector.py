@@ -50,10 +50,18 @@ MIN_SHIFT_STRENGTH = 0.2
 EDGE_MARGIN = 0.05
 
 # 画面のこれ以上の割合がいっぺんに動いていたら、「自分が動いた
-# (カメラ全体のブレ)」とみなして個々の物としては拾わない。
+# (カメラ全体のブレ)」の可能性を疑う。
 # 室内で歩く・急に向きを変えるなど、手ブレ打ち消しが利かない場面での
 # 過剰な反応を防ぐ (打ち消しを使う時だけ効く)
 GLOBAL_MOTION_FRAC = 0.35
+
+# 疑わしい時でも、変化のほとんど (この割合以上) が1つの塊に集まっていて、
+# かつその塊が画面を覆いつくしていなければ、「目の前の大きな物」として残す。
+# バスや直前の歩行者など、一番危険な物を取りこぼさないため
+DOMINANT_BLOB_FRAC = 0.6
+# 「目の前の物」とみなせる塊の大きさの上限 (画面全体を1として)。
+# これを超えて画面ほぼ全部が変わっているのは、物ではなく自分の動き
+DOMINANT_AREA_LIMIT = 0.8
 
 
 class MovingThingFinder:
@@ -116,20 +124,25 @@ class MovingThingFinder:
 
         mask = imgproc.dilate(mask, iterations=2)  # 白い場所を少しふくらませてつなげる
 
-        # 画面の広い範囲がいっぺんに動いた = 自分が動いた(カメラ全体のブレ)と
-        # みなして、この1枚は何も拾わない。歩きながらの撮影で画面全体が流れる
-        # ような時に、あちこちを「動く物」と誤検出して騒ぐのを防ぐ
+        boxes = imgproc.find_boxes(mask)
+
+        # 画面の広い範囲がいっぺんに動いた時は「自分が動いた(カメラのブレ)」を疑う。
+        # ただし、変化が1つの塊に集まっている時は「目の前の大きな物」なので残す。
+        # 歩きながらの撮影で画面全体が流れるような時だけ、誤検出を捨てる
         if self.stabilize and float(mask.mean()) > GLOBAL_MOTION_FRAC:
-            self._prev_gray = gray
-            self._prev_things = []
-            return []
+            dominant = self._dominant_box(mask, boxes)
+            if dominant is None:
+                self._prev_gray = gray
+                self._prev_things = []
+                return []
+            boxes = [dominant]
 
         # 白いかたまりを物として拾う
         img_h, img_w = gray.shape
         min_area = self.min_size * img_w * img_h
 
         things = []
-        for x, y, w, h in imgproc.find_boxes(mask):
+        for x, y, w, h in boxes:
             if w * h < min_area:
                 continue  # 小さすぎる物はノイズとして捨てる
             things.append({
@@ -160,6 +173,34 @@ class MovingThingFinder:
         """覚えている画像を忘れて、最初からやり直す。"""
         self._prev_gray = None
         self._prev_things = []
+
+    @staticmethod
+    def _dominant_box(mask, boxes):
+        """変化のほとんどを占める「1つの大きな塊」があればその箱を返す。
+
+        ・変化した画素の DOMINANT_BLOB_FRAC 以上が1つの塊に集まっていて、
+        ・その塊が画面を覆いつくしていない (DOMINANT_AREA_LIMIT 以下)
+        なら「目の前の大きな物」とみなす。どちらも満たさなければ None
+        (= 画面のあちこちが変わった。自分が動いただけ) を返す。
+        """
+        total = float(mask.sum())
+        if total <= 0 or not boxes:
+            return None
+        best = None
+        best_pixels = 0.0
+        for box in boxes:
+            x, y, w, h = box
+            pixels = float(mask[y:y + h, x:x + w].sum())
+            if pixels > best_pixels:
+                best_pixels = pixels
+                best = box
+        img_h, img_w = mask.shape
+        x, y, w, h = best
+        if best_pixels / total < DOMINANT_BLOB_FRAC:
+            return None  # 変化が複数の場所に散らばっている
+        if (w * h) / float(img_w * img_h) > DOMINANT_AREA_LIMIT:
+            return None  # 画面ほぼ全部が1つの塊 = 物ではなく自分の動き
+        return best
 
     @staticmethod
     def _align_to(prev, gray):

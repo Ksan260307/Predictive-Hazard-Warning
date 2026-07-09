@@ -56,6 +56,9 @@ class SnapshotKeeper:
             raise ValueError("画像がありません")
         if not isinstance(frame, np.ndarray) or frame.ndim not in (2, 3) or frame.size == 0:
             raise ValueError("画像の形式が正しくありません")
+        if frame.ndim == 3 and frame.shape[2] != 3:
+            # 4チャンネル等は保存(PNG化)できないので、覚える前に止める
+            raise ValueError("画像はカラー(縦x横x3)か白黒(縦x横)にしてください")
         self._frames.append(frame)
 
     def save(self, tag, t=None):

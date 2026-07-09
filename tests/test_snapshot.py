@@ -121,6 +121,8 @@ def test_おかしな画像や名前は止まる(tmp_path):
         keeper.add("画像ではない")
     with pytest.raises(ValueError):
         keeper.add(np.zeros((0, 0, 3), dtype=np.uint8))
+    with pytest.raises(ValueError):
+        keeper.add(np.zeros((8, 8, 4), dtype=np.uint8))  # 4チャンネルはPNG化できない
     keeper.add(frame())
     with pytest.raises(ValueError):
         keeper.save("")
